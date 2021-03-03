@@ -1,3 +1,57 @@
+# 黑群晖6.1.7搭建
+---
+> 准备
+
+- [x] ds3617_6.1.img
+- [x] DS_3617xs_15284.pat
+- [ ] DiskGenius分区工具
+- [ ] Win32DiskImager 或 Diskimage
+- [ ] Notepad++
+
+[阿文菌的安装教程](https://post.smzdm.com/p/ag82zdd3/)
+
+## ①制作群晖引导U盘
+
+> 记录以下数据,后面修改用 
+```ruby
+# 查看NAS设备MAC地址,类似:
+  00-1E-37-86-B7-AB
+# 查看U盘的设备ID,类似:
+  VID = 0930 PID = 140A
+```
+> 将`ds3617_6.1.img`刻录至U盘
+```bash
+  - 刻录前最好删除U盘所有分区并格式化
+  - 用Win32DiskImager 或 Diskimage都行
+  - 用Diskimage的话,在 Write Image to 下拉菜单中选择 Physical Disk开头的选项
+```
+> 修改`grub.cfg`
+```bash
+  - 用DiskGenius分区工具查看U盘,找到ESP/grub/grub.cfg,右键复制到桌面
+  - 用Notepad++打开grub.cfg,按照之前查到的设备 ID (U盘的)和 MAC 地址(NAS的)修改,保存
+  - 把修改过的grub.cfg文件拖回ESP/grub/目录,替换原文件
+```
+
+## ②用U盘启动
+
+1. U盘插入NAS
+1. 将NAS用网线连接至路由器
+1. 开机,设置为U盘启动
+
+## ③安装群晖系统
+1. 浏览器访问[find.synology.com](http://find.synology.com/)
+2. 搜索到NAS设备后进入安装界面,点 *设置*
+3. 用`手动安装`,点 *浏览*  选择 `DS_3617xs_15284.pat`
+
+!> 注意! NAS中所有硬盘数据将删除!!!
+
+4. 等待安装完成
+
+## 疑难杂症
+
+> 安装方式
+
+
 ## Welcome to GitHub Pages
 
 You can use the [editor on GitHub](https://github.com/xiiiu/iot/edit/main/README.md) to maintain and preview the content for your website in Markdown files.
@@ -35,7 +89,7 @@ Your Pages site will use the layout and styles from the Jekyll theme you have se
 ### Support or Contact
 
 Having trouble with Pages? Check out our [documentation](https://docs.github.com/categories/github-pages-basics/) or [contact support](https://support.github.com/contact) and we’ll help you sort it out.
-```markdown
+```python
 #!/usr/bin/env python3
 #coding=utf-8
  
@@ -49,4 +103,142 @@ from aliyunsdkalidns.request.v20150109 import DescribeSubDomainRecordsRequest, A
  
 # 加载内置模块
 import json,urllib
+# AccessKey 和 Secret 建议使用 RAM 子账户的 KEY 和 SECRET 增加安全性
+ID = ''
+SECRET = ''
+ 
+# 地区节点 可选地区取决于你的阿里云帐号等级，普通用户只有四个，分别是杭州、上海、深圳、河北，具体参考官网API
+regionId = 'cn-hangzhou'
+ 
+# 配置认证信息
+client = AcsClient(ID, SECRET, regionId)
+ 
+# 设置主域名
+DomainName = 'fozn.com'
+ 
+# 子域名列表 列表参数可根据实际需求增加或减少值
+SubDomainList = ['www','@']
+ 
+# 获取外网IP  三个地址返回的ip地址格式各不相同，3322 的是最纯净的格式， 备选1为 json格式 备选2 为curl方式获取 两个备选地址都需要对获取值作进一步处理才能使用
+#http://www.3322.org/dyndns/getip
+def getIp():
+  # 备选地址： 1， http://pv.sohu.com/cityjson?ie=utf-8  2，curl -L tool.lu/ip
+  with urllib.request.urlopen('https://api-ipv4.ip.sb/ip') as response:
+    html = response.read()
+    ip = str(html, encoding='utf-8').replace("\n", "")
+  return ip
+ 
+# 查询记录
+def getDomainInfo(SubDomain):
+  request = DescribeSubDomainRecordsRequest.DescribeSubDomainRecordsRequest()
+  request.set_accept_format('json')
+ 
+  # 设置要查询的记录类型为 A记录  官网支持A / CNAME / MX / AAAA / TXT / NS / SRV / CAA / URL隐性（显性）转发 如果有需要可将该值配置为参数传入
+  request.set_Type("A")
+ 
+  # 指定查记的域名 格式为 'test.example.com'
+  request.set_SubDomain(SubDomain)
+ 
+  response = client.do_action_with_exception(request)
+  response = str(response, encoding='utf-8')
+ 
+  # 将获取到的记录转换成json对象并返回
+  return json.loads(response)
+ 
+# 新增记录 (默认都设置为A记录，通过配置set_Type可设置为其他记录)
+def addDomainRecord(client,value,rr,domainname):
+  request = AddDomainRecordRequest.AddDomainRecordRequest()
+  request.set_accept_format('json')
+ 
+  # request.set_Priority('1') # MX 记录时的必选参数
+  request.set_TTL('600')    # 可选值的范围取决于你的阿里云账户等级，免费版为 600 - 86400 单位为秒 
+  request.set_Value(value)   # 新增的 ip 地址
+  request.set_Type('A')    # 记录类型
+  request.set_RR(rr)      # 子域名名称 
+  request.set_DomainName(domainname) #主域名
+ 
+  # 获取记录信息，返回信息中包含 TotalCount 字段，表示获取到的记录条数 0 表示没有记录， 其他数字为多少表示有多少条相同记录，正常有记录的值应该为1，如果值大于1则应该检查是不是重复添加了相同的记录
+  response = client.do_action_with_exception(request)
+  response = str(response, encoding='utf-8')
+  relsult = json.loads(response)
+  return relsult
+ 
+# 更新记录
+def updateDomainRecord(client,value,rr,record_id):
+  request = UpdateDomainRecordRequest.UpdateDomainRecordRequest()
+  request.set_accept_format('json')
+ 
+  # request.set_Priority('1')
+  request.set_TTL('600')
+  request.set_Value(value) # 新的ip地址
+  request.set_Type('A')
+  request.set_RR(rr)
+  request.set_RecordId(record_id) # 更新记录需要指定 record_id ，该字段为记录的唯一标识，可以在获取方法的返回信息中得到该字段的值
+ 
+  response = client.do_action_with_exception(request)
+  response = str(response, encoding='utf-8')
+  return response
+ 
+# 删除记录
+def delDomainRecord(client,subdomain):
+  info = getDomainInfo(subdomain)
+  if info['TotalCount'] == 0:
+    print('没有相关的记录信息，删除失败！')
+  elif info["TotalCount"] == 1:
+    print('准备删除记录')
+    request = DeleteDomainRecordRequest.DeleteDomainRecordRequest()
+    request.set_accept_format('json')
+ 
+    record_id = info["DomainRecords"]["Record"][0]["RecordId"]
+    request.set_RecordId(record_id) # 删除记录需要指定 record_id ，该字段为记录的唯一标识，可以在获取方法的返回信息中得到该字段的值
+    result = client.do_action_with_exception(request)
+    print('删除成功，返回信息：')
+    print(result)
+  else:
+    # 正常不应该有多条相同的记录，如果存在这种情况，应该手动去网站检查核实是否有操作失误
+    print("存在多个相同子域名解析记录值，请核查后再操作！")
+ 
+# 有记录则更新，没有记录则新增
+def setDomainRecord(client,value,rr,domainname):
+  info = getDomainInfo(rr + '.' + domainname)
+  if info['TotalCount'] == 0:
+    print('准备添加新记录')
+    add_result = addDomainRecord(client,value,rr,domainname)
+    print(add_result)
+  elif info["TotalCount"] == 1:
+    print('准备更新已有记录')
+    record_id = info["DomainRecords"]["Record"][0]["RecordId"]
+    cur_ip = getIp()
+    old_ip = info["DomainRecords"]["Record"][0]["Value"]
+    if cur_ip == old_ip:
+      print ("新ip与原ip相同，无法更新！")
+    else:
+      update_result = updateDomainRecord(client,value,rr,record_id)
+      print('更新成功，返回信息：')
+      print(update_result)
+  else:
+    # 正常不应该有多条相同的记录，如果存在这种情况，应该手动去网站检查核实是否有操作失误
+    print("存在多个相同子域名解析记录值，请核查删除后再操作！")
+ 
+ 
+IP = getIp()
+ 
+# 循环子域名列表进行批量操作
+for x in SubDomainList:
+  setDomainRecord(client,IP,x,DomainName)
+ 
+# 删除记录测试
+# delDomainRecord(client,'b.jsoner.com')
+ 
+# 新增或更新记录测试
+# setDomainRecord(client,'192.168.3.222','a',DomainName)
+ 
+# 获取记录测试
+#print(getDomainInfo(DomainName,'y')) 
+# 批量获取记录测试
+# for x in SubDomainList:
+#   print (getDomainInfo(DomainName, x))
+ 
+# 获取外网ip地址测试
+#print('(' + getIp() + ')')
 ```
